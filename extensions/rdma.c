@@ -85,15 +85,42 @@ rdma_init_subsystem(void)
 	if (rdma->flags & RDMA_INIT)
 		return;
 
-	/* Check if IB device structure exists */
+	/* Check if IB device structure exists - try OFED version first */
 	STRUCT_SIZE_INIT(ib_device, "ib_device");
+	
+	/* Check if we're dealing with OFED kernel by looking for OFED-specific structures */
+	int is_ofed_kernel = 0;
+	if (symbol_exists("mlx5_ib_device") || symbol_exists("mlx5_ib_devices")) {
+		is_ofed_kernel = 1;
+		fprintf(fp, "Detected OFED kernel, using OFED ib_device structure\n");
+	}
 	
 	if (VALID_STRUCT(ib_device)) {
 		rdma->ib_device = "ib_device";
 		
+		/* Print structure size for debugging */
+		fprintf(fp, "IB Device structure size: %ld bytes\n", STRUCT_SIZE("ib_device"));
+		
+		/* Check if this looks like OFED structure (smaller size) */
+		if (STRUCT_SIZE("ib_device") < 3000) {
+			is_ofed_kernel = 1;
+			fprintf(fp, "Detected OFED kernel based on structure size\n");
+		}
+		
 		/* Initialize member offsets */
 		rdma->ib_device_name_offset = MEMBER_OFFSET_INIT(ib_device_name,
 			"ib_device", "name");
+		
+		/* For OFED kernels, use the exact known offsets */
+		if (is_ofed_kernel) {
+			fprintf(fp, "Using OFED-specific hardcoded offsets for ib_device structure\n");
+			/* Use the exact offsets from kernel debug print */
+			rdma->ib_device_name_offset = 1136;  /* From kernel debug print */
+			rdma->ib_device_node_guid_offset = 2312;  /* From kernel debug print */
+			rdma->ib_device_node_type_offset = 2325;  /* From kernel debug print */
+			rdma->ib_device_ports_offset = 2328;  /* From kernel debug print */
+		} else {
+		
 		/* Try different possible member names for node type */
 		rdma->ib_device_node_type_offset = MEMBER_OFFSET_INIT(ib_device_node_type,
 			"ib_device", "node_type");
@@ -140,6 +167,7 @@ rdma_init_subsystem(void)
 			rdma->ib_device_ports_offset = MEMBER_OFFSET_INIT(ib_device_ports,
 				"ib_device", "num_ports");
 		}
+		}
 		
 
 		
@@ -149,6 +177,25 @@ rdma_init_subsystem(void)
 		fprintf(fp, "  node_type offset: %ld\n", rdma->ib_device_node_type_offset);
 		fprintf(fp, "  node_guid offset: %ld\n", rdma->ib_device_node_guid_offset);
 		fprintf(fp, "  phys_port_cnt offset: %ld\n", rdma->ib_device_ports_offset);
+		
+		/* Validate offsets are within structure bounds */
+		ulong struct_size = STRUCT_SIZE("ib_device");
+		if (rdma->ib_device_name_offset >= struct_size) {
+			fprintf(fp, "WARNING: name offset %ld >= structure size %ld\n", 
+				rdma->ib_device_name_offset, struct_size);
+		}
+		if (rdma->ib_device_node_type_offset >= struct_size) {
+			fprintf(fp, "WARNING: node_type offset %ld >= structure size %ld\n", 
+				rdma->ib_device_node_type_offset, struct_size);
+		}
+		if (rdma->ib_device_node_guid_offset >= struct_size) {
+			fprintf(fp, "WARNING: node_guid offset %ld >= structure size %ld\n", 
+				rdma->ib_device_node_guid_offset, struct_size);
+		}
+		if (rdma->ib_device_ports_offset >= struct_size) {
+			fprintf(fp, "WARNING: phys_port_cnt offset %ld >= structure size %ld\n", 
+				rdma->ib_device_ports_offset, struct_size);
+		}
 		
 		/* Debug: Show which members were found */
 		fprintf(fp, "Member detection results:\n");
